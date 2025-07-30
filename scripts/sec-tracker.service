@@ -1,0 +1,39 @@
+[Unit]
+Description=Security Tracker Agent
+Documentation=https://github.com/sec-tracker/docs
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=sec-tracker
+Group=sec-tracker
+ExecStart=/usr/local/bin/sec-tracker
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sec-tracker
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/sec-tracker /var/lib/sec-tracker
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Working directory
+WorkingDirectory=/etc/sec-tracker
+Environment=CONFIG_FILE=/etc/sec-tracker/config.json
+
+[Install]
+WantedBy=multi-user.target 

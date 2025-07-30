@@ -1,0 +1,50 @@
+{
+  "server": {
+    "url": "https://management-server.example.com",
+    "api_key": "your-api-key-here",
+    "timeout": "30s",
+    "retry_max": 3,
+    "batch_size": 100
+  },
+  "agent": {
+    "id": "agent-001",
+    "name": "Production-Server-01",
+    "report_interval": "60s",
+    "buffer_size": 1000,
+    "max_queue_size": 10000,
+    "enable_tls": true,
+    "cert_path": "/etc/sec-tracker/certs/"
+  },
+  "monitoring": {
+    "system_info": true,
+    "process_monitor": true,
+    "file_monitor": true,
+    "network_monitor": true,
+    "auth_monitor": true,
+    "watch_paths": [
+      "/etc",
+      "/usr/bin",
+      "/usr/sbin",
+      "/bin",
+      "/sbin",
+      "/var/log",
+      "/home"
+    ],
+    "scan_interval": "5s"
+  },
+  "logging": {
+    "level": "info",
+    "file_path": "/var/log/sec-tracker/agent.log",
+    "max_size": 100,
+    "max_backups": 5,
+    "max_age": 30
+  },
+  "local_mode": false,
+  "local_output": {
+    "json_format": false,
+    "one_shot": false,
+    "show_timestamp": true,
+    "show_colors": true,
+    "compact_output": false
+  }
+} 
