@@ -60,7 +60,7 @@ func New(cfg *config.Config) (*Agent, error) {
 	sysCollector := collector.NewSystemCollector()
 	
 	// Create monitor
-	monitor, err := monitor.NewMonitor(cfg.Agent.ID, cfg.Monitoring.WatchPaths)
+	eventMonitor, err := monitor.NewMonitor(cfg.Agent.ID, cfg.Monitoring.WatchPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create monitor: %w", err)
 	}
@@ -68,7 +68,7 @@ func New(cfg *config.Config) (*Agent, error) {
 	agent := &Agent{
 		config:          cfg,
 		systemCollector: sysCollector,
-		monitor:         monitor,
+		monitor:         eventMonitor,
 		eventBuffer:     make([]monitor.Event, 0),
 		status:          StatusStopped,
 		metrics: AgentMetrics{
