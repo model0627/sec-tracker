@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/sec-tracker/internal/agent"
 	"github.com/sec-tracker/internal/config"
