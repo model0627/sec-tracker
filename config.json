@@ -9,7 +9,7 @@
   "agent": {
     "id": "agent-001",
     "name": "Production-Server-01",
-    "report_interval": "60s",
+    "report_interval": "300s",
     "buffer_size": 1000,
     "max_queue_size": 10000,
     "enable_tls": true,
@@ -19,18 +19,16 @@
     "system_info": true,
     "process_monitor": true,
     "file_monitor": true,
-    "network_monitor": true,
+    "network_monitor": false,
     "auth_monitor": true,
     "watch_paths": [
-      "/etc",
-      "/usr/bin",
-      "/usr/sbin",
-      "/bin",
-      "/sbin",
-      "/var/log",
-      "/home"
+      "/etc/passwd",
+      "/etc/shadow",
+      "/etc/sudoers",
+      "/etc/ssh",
+      "/root"
     ],
-    "scan_interval": "5s"
+    "scan_interval": "10s"
   },
   "logging": {
     "level": "info",
@@ -45,6 +43,6 @@
     "one_shot": false,
     "show_timestamp": true,
     "show_colors": true,
-    "compact_output": false
+    "compact_output": true
   }
 } 

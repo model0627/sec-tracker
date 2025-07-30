@@ -192,6 +192,11 @@ func (m *Monitor) handleFileEvent(event fsnotify.Event) {
 		return
 	}
 
+	// Filter out unimportant file events
+	if m.shouldFilterFileEvent(event.Name, action) {
+		return
+	}
+
 	fileInfo, err := os.Stat(event.Name)
 	var size int64
 	var mode string
@@ -217,6 +222,52 @@ func (m *Monitor) handleFileEvent(event fsnotify.Event) {
 		Details:   map[string]interface{}{"file_event": fileEvent},
 		AgentID:   m.agentID,
 	})
+}
+
+// shouldFilterFileEvent determines if a file event should be filtered out
+func (m *Monitor) shouldFilterFileEvent(path, action string) bool {
+	// Filter out temporary files and common noise
+	if strings.Contains(path, "/.") ||
+	   strings.HasSuffix(path, "~") ||
+	   strings.HasSuffix(path, ".tmp") ||
+	   strings.HasSuffix(path, ".swp") ||
+	   strings.HasSuffix(path, ".lock") ||
+	   strings.Contains(path, "/tmp/") ||
+	   strings.Contains(path, "/.cache/") ||
+	   strings.Contains(path, "/.local/") {
+		return true
+	}
+	
+	// Filter out log file modifications (too noisy)
+	if action == "modify" && (
+		strings.Contains(path, "/var/log/") ||
+		strings.HasSuffix(path, ".log")) {
+		return true
+	}
+	
+	// Only monitor critical files in /etc
+	if strings.HasPrefix(path, "/etc/") {
+		criticalFiles := []string{
+			"/etc/passwd", "/etc/shadow", "/etc/group",
+			"/etc/sudoers", "/etc/hosts", "/etc/fstab",
+			"/etc/ssh/", "/etc/crontab", "/etc/profile",
+			"/etc/bashrc", "/etc/environment",
+		}
+		
+		isCritical := false
+		for _, critical := range criticalFiles {
+			if strings.HasPrefix(path, critical) {
+				isCritical = true
+				break
+			}
+		}
+		
+		if !isCritical {
+			return true
+		}
+	}
+	
+	return false
 }
 
 // monitorProcesses monitors process creation and termination
@@ -259,6 +310,11 @@ func (m *Monitor) scanProcesses() {
 			continue
 		}
 
+		// Skip if this process should be filtered out
+		if m.shouldFilterProcess(procInfo) {
+			continue
+		}
+
 		currentProcs[pid] = procInfo
 
 		// Check for new processes
@@ -267,14 +323,98 @@ func (m *Monitor) scanProcesses() {
 		}
 	}
 
-	// Check for terminated processes
+	// Check for terminated processes (only for tracked processes)
 	for pid, procInfo := range m.procMap {
 		if _, exists := currentProcs[pid]; !exists {
-			m.handleProcessEvent(procInfo, "stopped")
+			// Only report termination for important processes
+			if m.isImportantProcess(procInfo) {
+				m.handleProcessEvent(procInfo, "stopped")
+			}
 		}
 	}
 
 	m.procMap = currentProcs
+}
+
+// shouldFilterProcess determines if a process should be filtered out
+func (m *Monitor) shouldFilterProcess(proc ProcessInfo) bool {
+	command := strings.ToLower(proc.Command)
+	
+	// Filter out common system processes that create noise
+	noiseProcesses := []string{
+		"kworker", "ksoftirqd", "migration", "rcu_", "watchdog",
+		"systemd", "init", "kernel", "kthread", "irq/",
+		"dbus", "NetworkManager", "systemd-", "avahi-daemon",
+		"rsyslog", "cron", "getty", "dhclient", "ntpd",
+		"polkitd", "accounts-daemon", "packagekit", "udisks",
+		"colord", "bluetooth", "cups", "pulseaudio",
+		"gnome-", "unity-", "compiz", "Xorg", "lightdm",
+		"postgres", "mysqld", "apache2", "nginx", "node",
+		"python3 -u /usr/bin/", "python /usr/bin/",
+		"/snap/", "snap-confine", "snapd",
+	}
+	
+	for _, noise := range noiseProcesses {
+		if strings.Contains(command, noise) {
+			return true
+		}
+	}
+	
+	// Filter out very short-lived or trivial commands
+	trivialCommands := []string{
+		"ls", "ps", "cat", "echo", "pwd", "whoami", "id",
+		"which", "whereis", "man", "help", "history",
+		"clear", "reset", "tput", "stty", "uptime",
+		"date", "cal", "bc", "wc", "head", "tail",
+		"grep", "sed", "awk", "sort", "uniq", "cut",
+		"tr", "tee", "less", "more", "vi", "nano",
+		"sleep", "true", "false", "test", "expr",
+	}
+	
+	// Only filter if it's a simple command without arguments
+	commandParts := strings.Fields(command)
+	if len(commandParts) == 1 {
+		for _, trivial := range trivialCommands {
+			if commandParts[0] == trivial || 
+			   strings.HasSuffix(commandParts[0], "/"+trivial) {
+				return true
+			}
+		}
+	}
+	
+	// Filter out processes with very short runtime (likely completed already)
+	if proc.PID == 0 {
+		return true
+	}
+	
+	return false
+}
+
+// isImportantProcess determines if a process termination should be reported
+func (m *Monitor) isImportantProcess(proc ProcessInfo) bool {
+	command := strings.ToLower(proc.Command)
+	
+	// Important processes whose termination should be reported
+	importantProcesses := []string{
+		"sshd", "ssh", "sudo", "su", "systemctl",
+		"service", "mount", "umount", "crontab",
+		"iptables", "ufw", "passwd", "useradd", "userdel",
+		"docker", "kubectl", "git", "curl", "wget",
+		"nc", "netcat", "nmap", "tcpdump", "wireshark",
+	}
+	
+	for _, important := range importantProcesses {
+		if strings.Contains(command, important) {
+			return true
+		}
+	}
+	
+	// Processes running as root (except system processes)
+	if proc.User == "root" && !m.isSystemProcess(command) {
+		return true
+	}
+	
+	return false
 }
 
 // getProcessInfo retrieves process information from /proc/[pid]/
@@ -298,6 +438,19 @@ func (m *Monitor) getProcessInfo(pid int) (ProcessInfo, error) {
 	commContent, err := os.ReadFile(commPath)
 	if err == nil {
 		info.Command = strings.TrimSpace(string(commContent))
+	}
+
+	// Read /proc/[pid]/cmdline for full command line arguments
+	cmdlinePath := filepath.Join("/proc", strconv.Itoa(pid), "cmdline")
+	cmdlineContent, err := os.ReadFile(cmdlinePath)
+	if err == nil {
+		// cmdline is null-separated, convert to space-separated
+		cmdline := string(cmdlineContent)
+		cmdline = strings.ReplaceAll(cmdline, "\x00", " ")
+		cmdline = strings.TrimSpace(cmdline)
+		if cmdline != "" {
+			info.Command = cmdline
+		}
 	}
 
 	// Read /proc/[pid]/status for user info
@@ -340,8 +493,39 @@ func (m *Monitor) handleProcessEvent(proc ProcessInfo, action string) {
 	}
 
 	severity := "info"
-	if proc.User == "root" || strings.Contains(proc.Command, "sudo") {
-		severity = "warning"
+	message := fmt.Sprintf("Process %s: %s (PID: %d)", action, proc.Command, proc.PID)
+	
+	// Enhanced security analysis
+	if action == "started" {
+		severity = m.analyzeProcessSecurity(proc)
+		
+		// Special handling for shell commands
+		if m.isShellProcess(proc.Command) {
+			severity = m.analyzeShellCommand(proc)
+			message = fmt.Sprintf("Shell command executed: %s by %s (PID: %d)", 
+				m.extractShellCommand(proc.Command), proc.User, proc.PID)
+		}
+		
+		// Check for SSH-related processes
+		if m.isSSHRelated(proc.Command) {
+			severity = "warning"
+			message = fmt.Sprintf("SSH activity: %s by %s (PID: %d)", 
+				proc.Command, proc.User, proc.PID)
+		}
+		
+		// Check for system administration commands
+		if m.isSystemAdminCommand(proc.Command) {
+			severity = "warning"
+			message = fmt.Sprintf("System admin command: %s by %s (PID: %d)", 
+				proc.Command, proc.User, proc.PID)
+		}
+	}
+
+	// Add command details to event
+	details := map[string]interface{}{
+		"process_event": procEvent,
+		"command_type": m.categorizeCommand(proc.Command),
+		"risk_level":   m.getRiskLevel(proc.Command),
 	}
 
 	m.sendEvent(Event{
@@ -349,11 +533,228 @@ func (m *Monitor) handleProcessEvent(proc ProcessInfo, action string) {
 		Type:      EventTypeProcess,
 		Timestamp: time.Now(),
 		Source:    "process_monitor",
-		Message:   fmt.Sprintf("Process %s: %s (PID: %d)", action, proc.Command, proc.PID),
+		Message:   message,
 		Severity:  severity,
-		Details:   map[string]interface{}{"process_event": procEvent},
+		Details:   details,
 		AgentID:   m.agentID,
 	})
+}
+
+// analyzeProcessSecurity determines security level of a process
+func (m *Monitor) analyzeProcessSecurity(proc ProcessInfo) string {
+	command := strings.ToLower(proc.Command)
+	
+	// Critical security commands
+	criticalCommands := []string{
+		"sudo", "su", "passwd", "useradd", "userdel", "usermod",
+		"chmod +s", "chown root", "mount", "umount",
+		"iptables", "ufw", "firewall", "systemctl",
+		"service", "crontab", "at", "nc", "netcat",
+		"nmap", "tcpdump", "wireshark", "john", "hashcat",
+	}
+	
+	for _, cmd := range criticalCommands {
+		if strings.Contains(command, cmd) {
+			return "critical"
+		}
+	}
+	
+	// Warning level commands
+	warningCommands := []string{
+		"ssh", "scp", "rsync", "wget", "curl",
+		"git clone", "docker", "kubectl", "aws",
+		"rm -rf", "dd if=", "fdisk", "parted",
+		"ps aux", "netstat", "ss", "lsof",
+	}
+	
+	for _, cmd := range warningCommands {
+		if strings.Contains(command, cmd) {
+			return "warning"
+		}
+	}
+	
+	// Check if running as root
+	if proc.User == "root" && !m.isSystemProcess(command) {
+		return "warning"
+	}
+	
+	return "info"
+}
+
+// isShellProcess checks if the process is a shell
+func (m *Monitor) isShellProcess(command string) bool {
+	command = strings.ToLower(command)
+	shells := []string{"bash", "zsh", "sh", "fish", "csh", "tcsh", "ksh"}
+	
+	for _, shell := range shells {
+		// Check if command starts with shell name
+		if strings.HasPrefix(command, shell+" ") || 
+		   strings.HasPrefix(command, "/bin/"+shell+" ") ||
+		   strings.HasPrefix(command, "/usr/bin/"+shell+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// analyzeShellCommand analyzes shell commands for security
+func (m *Monitor) analyzeShellCommand(proc ProcessInfo) string {
+	command := strings.ToLower(proc.Command)
+	
+	// Check for potentially dangerous shell patterns
+	dangerousPatterns := []string{
+		"rm -rf /", ":(){ :|:& };:", "curl.*|sh", "wget.*|sh",
+		"base64.*|sh", "echo.*|sh", "cat /etc/passwd", "cat /etc/shadow",
+		"history -c", "unset HISTFILE", "export HISTSIZE=0",
+		"> ~/.bash_history", "shred", "wipe",
+	}
+	
+	for _, pattern := range dangerousPatterns {
+		if strings.Contains(command, pattern) {
+			return "critical"
+		}
+	}
+	
+	// Check for file manipulation
+	if strings.Contains(command, "rm ") || strings.Contains(command, "mv ") ||
+	   strings.Contains(command, "cp ") || strings.Contains(command, "chmod ") {
+		return "warning"
+	}
+	
+	// Check for network activity
+	if strings.Contains(command, "curl ") || strings.Contains(command, "wget ") ||
+	   strings.Contains(command, "ssh ") || strings.Contains(command, "scp ") {
+		return "warning"
+	}
+	
+	return "info"
+}
+
+// extractShellCommand extracts the actual command from shell process
+func (m *Monitor) extractShellCommand(command string) string {
+	// Extract command after -c flag
+	if strings.Contains(command, " -c ") {
+		parts := strings.Split(command, " -c ")
+		if len(parts) > 1 {
+			return strings.Trim(parts[1], "\"'")
+		}
+	}
+	
+	// Extract last part if it's a direct command
+	parts := strings.Fields(command)
+	if len(parts) > 1 {
+		return strings.Join(parts[1:], " ")
+	}
+	
+	return command
+}
+
+// isSSHRelated checks if command is SSH-related
+func (m *Monitor) isSSHRelated(command string) bool {
+	command = strings.ToLower(command)
+	sshCommands := []string{"sshd", "ssh", "scp", "sftp", "ssh-keygen", "ssh-add", "ssh-agent"}
+	
+	for _, cmd := range sshCommands {
+		if strings.Contains(command, cmd) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSystemAdminCommand checks if command is system administration related
+func (m *Monitor) isSystemAdminCommand(command string) bool {
+	command = strings.ToLower(command)
+	adminCommands := []string{
+		"systemctl", "service", "chkconfig", "update-rc.d",
+		"apt", "yum", "dnf", "pacman", "zypper",
+		"mount", "umount", "fdisk", "parted", "lvm",
+		"iptables", "ufw", "firewall-cmd", "fail2ban",
+		"crontab", "at", "anacron",
+	}
+	
+	for _, cmd := range adminCommands {
+		if strings.Contains(command, cmd) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSystemProcess checks if it's a system process
+func (m *Monitor) isSystemProcess(command string) bool {
+	systemProcesses := []string{
+		"kernel", "kthread", "migration", "ksoftirqd", "watchdog",
+		"systemd", "init", "kworker", "rcu_", "irq/", "getty",
+	}
+	
+	for _, proc := range systemProcesses {
+		if strings.Contains(command, proc) {
+			return true
+		}
+	}
+	return false
+}
+
+// categorizeCommand categorizes the command type
+func (m *Monitor) categorizeCommand(command string) string {
+	command = strings.ToLower(command)
+	
+	if m.isShellProcess(command) {
+		return "shell_command"
+	}
+	if m.isSSHRelated(command) {
+		return "ssh_activity"
+	}
+	if m.isSystemAdminCommand(command) {
+		return "system_admin"
+	}
+	if strings.Contains(command, "docker") || strings.Contains(command, "kubectl") {
+		return "container"
+	}
+	if strings.Contains(command, "git") {
+		return "version_control"
+	}
+	if strings.Contains(command, "curl") || strings.Contains(command, "wget") {
+		return "network"
+	}
+	if strings.Contains(command, "vim") || strings.Contains(command, "nano") || strings.Contains(command, "emacs") {
+		return "text_editor"
+	}
+	
+	return "general"
+}
+
+// getRiskLevel determines risk level of command
+func (m *Monitor) getRiskLevel(command string) string {
+	command = strings.ToLower(command)
+	
+	// High risk patterns
+	highRisk := []string{
+		"rm -rf", "dd if=", ":(){ :|:& };:", "curl.*|sh", "wget.*|sh",
+		"chmod +s", "chown root", "/etc/passwd", "/etc/shadow",
+		"iptables -F", "ufw disable", "systemctl stop firewall",
+	}
+	
+	for _, pattern := range highRisk {
+		if strings.Contains(command, pattern) {
+			return "high"
+		}
+	}
+	
+	// Medium risk patterns
+	mediumRisk := []string{
+		"sudo", "su", "ssh", "scp", "mount", "systemctl",
+		"service", "crontab", "chmod", "chown", "passwd",
+	}
+	
+	for _, pattern := range mediumRisk {
+		if strings.Contains(command, pattern) {
+			return "medium"
+		}
+	}
+	
+	return "low"
 }
 
 // monitorNetwork monitors network connections

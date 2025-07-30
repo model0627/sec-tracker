@@ -196,17 +196,21 @@ func (t *TerminalOutputter) printEventHuman(event monitor.Event) {
 	severityColor := t.getSeverityColor(event.Severity)
 	
 	if t.config.LocalOutput.CompactOutput {
-		// Compact format
+		// Enhanced compact format with more details
 		timestamp := ""
 		if t.config.LocalOutput.ShowTimestamp {
 			timestamp = event.Timestamp.Format("15:04:05") + " "
 		}
 		
-		fmt.Printf("%s[%s] %s: %s%s\n",
+		// Extract key information based on event type
+		extraInfo := t.getCompactEventInfo(event)
+		
+		fmt.Printf("%s[%s] %s: %s%s%s\n",
 			timestamp,
 			t.colorize(severityColor, strings.ToUpper(string(event.Type))),
 			t.colorize(severityColor, strings.ToUpper(event.Severity)),
 			event.Message,
+			extraInfo,
 			t.colorize(ColorReset, ""))
 	} else {
 		// Detailed format
@@ -254,6 +258,19 @@ func (t *TerminalOutputter) printEventDetails(event monitor.Event) {
 				t.colorize(ColorCyan, "Details"),
 				procEvent["pid"], procEvent["ppid"], 
 				procEvent["user"], procEvent["command"])
+			
+			// Show additional command analysis if available
+			if commandType, exists := event.Details["command_type"]; exists {
+				fmt.Printf("%s: %v\n",
+					t.colorize(ColorCyan, "Type"), 
+					t.colorize(t.getCommandTypeColor(commandType.(string)), commandType.(string)))
+			}
+			
+			if riskLevel, exists := event.Details["risk_level"]; exists {
+				fmt.Printf("%s: %v\n",
+					t.colorize(ColorCyan, "Risk Level"), 
+					t.colorize(t.getRiskLevelColor(riskLevel.(string)), strings.ToUpper(riskLevel.(string))))
+			}
 		}
 	case monitor.EventTypeFile:
 		if fileEvent, ok := event.Details["file_event"].(map[string]interface{}); ok {
@@ -343,4 +360,69 @@ func (t *TerminalOutputter) PrintSummary(message string) {
 			t.colorize(ColorBlue, message),
 			t.colorize(ColorReset, ""))
 	}
+} 
+
+// getCommandTypeColor returns color based on command type
+func (t *TerminalOutputter) getCommandTypeColor(commandType string) string {
+	switch commandType {
+	case "ssh_activity":
+		return ColorYellow
+	case "system_admin":
+		return ColorRed
+	case "shell_command":
+		return ColorBlue
+	case "container":
+		return ColorPurple
+	case "network":
+		return ColorCyan
+	case "version_control":
+		return ColorGreen
+	default:
+		return ColorWhite
+	}
+}
+
+// getRiskLevelColor returns color based on risk level
+func (t *TerminalOutputter) getRiskLevelColor(riskLevel string) string {
+	switch riskLevel {
+	case "high":
+		return ColorRed
+	case "medium":
+		return ColorYellow
+	case "low":
+		return ColorGreen
+	default:
+		return ColorWhite
+	}
+} 
+
+// getCompactEventInfo extracts key information for compact display
+func (t *TerminalOutputter) getCompactEventInfo(event monitor.Event) string {
+	switch event.Type {
+	case monitor.EventTypeProcess:
+		if procEvent, ok := event.Details["process_event"].(map[string]interface{}); ok {
+			if riskLevel, exists := event.Details["risk_level"]; exists {
+				riskColor := t.getRiskLevelColor(riskLevel.(string))
+				return fmt.Sprintf(" [%s:%v]", 
+					t.colorize(riskColor, strings.ToUpper(riskLevel.(string))), 
+					procEvent["user"])
+			}
+			return fmt.Sprintf(" [%v]", procEvent["user"])
+		}
+	case monitor.EventTypeFile:
+		if fileEvent, ok := event.Details["file_event"].(map[string]interface{}); ok {
+			return fmt.Sprintf(" [%v]", fileEvent["action"])
+		}
+	case monitor.EventTypeAuth:
+		if authEvent, ok := event.Details["auth_event"].(map[string]interface{}); ok {
+			success := "OK"
+			if authEvent["success"] == false {
+				success = t.colorize(ColorRed, "FAIL")
+			} else {
+				success = t.colorize(ColorGreen, "OK")
+			}
+			return fmt.Sprintf(" [%s]", success)
+		}
+	}
+	return ""
 } 
