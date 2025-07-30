@@ -35,7 +35,7 @@ type Response struct {
 
 // Client handles communication with the management server
 type Client struct {
-	config     *config.Config
+	config     *config.ParsedConfig
 	httpClient *http.Client
 	queue      []Payload
 	queueMutex sync.RWMutex
@@ -53,7 +53,7 @@ type ClientMetrics struct {
 }
 
 // NewClient creates a new communication client
-func NewClient(cfg *config.Config) *Client {
+func NewClient(cfg *config.ParsedConfig) *Client {
 	// Configure HTTP client
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{

@@ -16,7 +16,7 @@ import (
 
 // Agent represents the main security monitoring agent
 type Agent struct {
-	config          *config.Config
+	config          *config.ParsedConfig
 	systemCollector *collector.SystemCollector
 	monitor         *monitor.Monitor
 	client          *sender.Client
@@ -55,7 +55,7 @@ type AgentMetrics struct {
 }
 
 // New creates a new agent instance
-func New(cfg *config.Config) (*Agent, error) {
+func New(cfg *config.ParsedConfig) (*Agent, error) {
 	// Create system collector
 	sysCollector := collector.NewSystemCollector()
 	
@@ -534,7 +534,7 @@ func (a *Agent) GetMetrics() AgentMetrics {
 }
 
 // GetConfig returns the agent configuration
-func (a *Agent) GetConfig() *config.Config {
+func (a *Agent) GetConfig() *config.ParsedConfig {
 	return a.config
 }
 

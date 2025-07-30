@@ -27,13 +27,13 @@ const (
 
 // TerminalOutputter handles terminal output for local mode
 type TerminalOutputter struct {
-	config     *config.Config
+	config     *config.ParsedConfig
 	useColors  bool
 	jsonFormat bool
 }
 
 // NewTerminalOutputter creates a new terminal outputter
-func NewTerminalOutputter(cfg *config.Config) *TerminalOutputter {
+func NewTerminalOutputter(cfg *config.ParsedConfig) *TerminalOutputter {
 	return &TerminalOutputter{
 		config:     cfg,
 		useColors:  cfg.LocalOutput.ShowColors && isTerminal(),
