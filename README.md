@@ -43,7 +43,7 @@
 
 ```bash
 # 저장소 클론
-git clone https://github.com/your-org/sec-tracker.git
+git clone https://github.com/model0627/sec-tracker.git
 cd sec-tracker
 
 # 의존성 설치
